@@ -1597,8 +1597,10 @@ map.on('load', async () => {
 (function () {
   const MAX_TGT = 300;                       // выбирать можно только цели не быстрее, км/г
   const VMAX = 300 / 3.6;                    // предел скорости перехватчика, м/с (300 км/г)
+  const HIT_P = 0.6;                         // шанс сбить при касании
+  const MISS_COOL = 25;                      // после промаха касание не проверяется столько секунд (пролёт мимо)
   const HIT_R = 30;                          // «очень близко» — радиус касания, м
-  const TRAIL_BEHIND = 450;                  // точка захода за хвостом цели, м
+  const TRAIL_BEHIND = 900;                  // точка захода за хвостом цели, м
   const PAL = { id: '#f2f4f8', tx: '#d3d8e0', fill: 'rgba(6, 6, 6, .97)', border: 'rgba(235, 240, 248, .65)', glow: 'rgba(0, 0, 0, .6)', sh: 'rgba(0, 0, 0, 0)' };
   const RD = Math.PI / 180, MPD = 111320;
   const norm = a => ((a % 360) + 360) % 360, dh = (a, b) => ((b - a + 540) % 360) - 180, clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -1684,7 +1686,7 @@ map.on('load', async () => {
   /* ---------- создание и команды ---------- */
   function spawn(ll) {
     const p = { lat: ll.lat, lng: ll.lng };
-    const h = { num: ++inum, p, h: 0, v: 0, alt: 0, mode: 'idle', key: null, vc: (270 + Math.random() * 30) / 3.6,   // крейсерская 270–300 км/г
+    const h = { num: ++inum, p, h: 0, v: 0, alt: 0, mode: 'idle', key: null, vc: (240 + Math.random() * 30) / 3.6, cool: 0,   // крейсерская 270–300 км/г
       lbl: '', lblKey: '', nextUpd: 0, seenPos: null, d: null, trail: [[p.lng, p.lat], [p.lng, p.lat]],
       f: { type: 'Feature', properties: { heading: 0, lbl: '', i: inum }, geometry: { type: 'Point', coordinates: [p.lng, p.lat] } }, tf: null };
     h.tf = { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: h.trail } };
@@ -1697,6 +1699,7 @@ map.on('load', async () => {
   function command(h, key) {
     const tg = states.get(key); if (!tg) return;
     h.mode = 'align'; h.key = key;
+    h.chase = 0; h.need = 120 + Math.random() * 120;                  // гоняется минимум 2–4 мин, прежде чем пойти на касание
     if (h.v < 1) { const p = positionAt(tg.geo, (srvNow() - tg.launchAtMs) / 1000); h.h = bearingDeg(h.p, { lat: p.lat, lng: p.lng }); }
   }
   const loc = (o, p) => [(p.lng - o.lng) * MPD * Math.cos(o.lat * RD), (p.lat - o.lat) * MPD];   // вектор o→p, м (восток, север)
@@ -1713,7 +1716,7 @@ map.on('load', async () => {
         const tp = positionAt(tg.geo, t0);
         const tv = tp.done ? 0 : (tp.speedKmh || 0) / 3.6, th = tp.heading || 0;
         const tAlt = tg.kab ? kabAlt(tg, tp) : (tp.altM || 0);
-        const vi = clamp(Math.max(h.vc, tv + 20 / 3.6), 0, VMAX);          // 270–300, быстрее цели (на сколько позволяет предел 300)
+        const vi = clamp(Math.max(h.vc, tv + 8 / 3.6), 0, VMAX);          // 270–300, быстрее цели (на сколько позволяет предел 300)
         const tpos = { lat: tp.lat, lng: tp.lng };
         const [rx, ry] = loc(tpos, h.p);                                   // где перехватчик относительно цели
         const along = rx * Math.sin(th * RD) + ry * Math.cos(th * RD);     // <0 — позади цели
@@ -1734,9 +1737,14 @@ map.on('load', async () => {
         const [cx, cy] = loc(h.p, tpos), mvx = Math.sin(h.h * RD) * h.v * dt, mvy = Math.cos(h.h * RD) * h.v * dt;
         const tt = clamp((cx * mvx + cy * mvy) / (mvx * mvx + mvy * mvy || 1), 0, 1);
         const miss = Math.hypot(cx - mvx * tt, cy - mvy * tt);
-        if (miss < HIT_R && Math.abs(h.alt - tAlt) < 60) {
-          const k = h.key; removeU(h); deleteTarget(k);                   // таран: перехватчик исчезает, цель сбита
-          return;
+        h.chase = (h.chase || 0) + dt;
+        if (h.cool > 0) h.cool -= dt;
+        else if (h.chase >= (h.need || 0) && miss < HIT_R && Math.abs(h.alt - tAlt) < 60) {
+          if (Math.random() < HIT_P) {
+            const k = h.key; removeU(h); deleteTarget(k);                 // таран: перехватчик исчезает, цель сбита
+            return;
+          }
+          h.cool = MISS_COOL; h.mode = 'align'; h.need = h.chase + 60 + Math.random() * 120;   // после промаха ещё 1–3 мин погони                          // промах: проскакивает мимо и заходит заново
         }
       }
     }
