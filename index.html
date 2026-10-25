@@ -1163,9 +1163,7 @@ map.on('load', async () => {
 
 /* ---------- кнопка «Информация» (слева снизу): сколько целей уничтожено ---------- */
 (function () {
-  const LS_KEY = 'skymap_kills_v1';
-  let kills = {};
-  try { kills = JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) {}
+  let kills = {};   // только в памяти: после перезагрузки страницы счётчик обнуляется
 
   // тип берём из Firebase (поле type цели), но близкие типы считаем вместе
   const groupName = t => {
@@ -1205,15 +1203,13 @@ map.on('load', async () => {
         : '<div class="iempty">Поки що нічого не знищено</div>') +
       (rows.length ? '<button id="iReset">Скинути лічильник</button>' : '');
     const r = document.getElementById('iReset');
-    if (r) r.onclick = () => { kills = {}; save(); render(); };
+    if (r) r.onclick = () => { kills = {}; render(); };
   }
-  function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(kills)); } catch (e) {} }
 
   // вызывается из deleteTarget() — и при ручном удалении, и когда цель сбита нашим самолётом
   window._recordKill = st => {
     const name = groupName(st.type) || uaLabel(st.label) || 'Інше';
     kills[name] = (kills[name] || 0) + 1;
-    save();
     if (menu.style.display === 'block') render();
   };
 
